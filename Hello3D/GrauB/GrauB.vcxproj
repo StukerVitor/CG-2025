@@ -145,15 +145,11 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="..\glad.c" />
-    <ClCompile Include="Mesh.cpp" />
     <ClCompile Include="Origem.cpp" />
     <ClCompile Include="Shader.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="Material.h" />
-    <ClInclude Include="Mesh.h" />
     <ClInclude Include="Shader.h" />
-    <ClInclude Include="Vertex.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="..\shaders\Line.fs" />
