@@ -115,7 +115,7 @@ bool moveW = false, moveA = false, moveS = false, moveD = false;
 bool editorMode = true;                     // Requisito 2a: Modo editor ativo inicialmente
 std::vector<glm::vec3> editorControlPoints; // Requisito 2a: Pontos de controle clicados
 int animationIndex = 0;                     // Índice para animação do carro
-float trackWidth = 2.0f;                    // Largura da pista
+float trackWidth = 1.0f;                    // Largura da pista
 GLuint showCurves = 1;
 
 // Adicionando as variáveis que antes estavam no main como globais
@@ -288,6 +288,16 @@ int main()
         }
         else
         {
+            //Movimentação de camera durante animação
+            if (moveW)
+                globalConfig.cameraPos += globalConfig.cameraFront * globalConfig.cameraSpeed;
+            if (moveA)
+                globalConfig.cameraPos -= glm::normalize(glm::cross(globalConfig.cameraFront, cameraUp)) * globalConfig.cameraSpeed;
+            if (moveS)
+                globalConfig.cameraPos -= globalConfig.cameraFront * globalConfig.cameraSpeed;
+            if (moveD)
+                globalConfig.cameraPos += glm::normalize(glm::cross(globalConfig.cameraFront, cameraUp)) * globalConfig.cameraSpeed;
+
             // Requisito 3: Visualizador 3D
             glUseProgram(objectShader.getId());
             glUniformMatrix4fv(glGetUniformLocation(objectShader.getId(), "view"), 1, GL_FALSE, glm::value_ptr(view));
@@ -303,22 +313,45 @@ int main()
             glUniform1f(glGetUniformLocation(objectShader.getId(), "attQuadratic"), globalConfig.attQuadratic);
 
             // Desenha malhas
+            float lastCarYaw = 0.0f;
             for (auto &pair : meshes)
             {
                 Mesh &mesh = pair.second;
                 glm::mat4 model(1.0f);
 
                 // Requisito 3d: Animação do carro
-                if (mesh.name == "Carro" && !mesh.animationPositions.empty())
+                if (mesh.name == "Carro" && mesh.animationPositions.size() >= 3)
                 {
-                    mesh.position = mesh.animationPositions[animationIndex % mesh.animationPositions.size()];
-                    model = glm::translate(model, mesh.position);
-                    if (animationIndex + 1 < mesh.animationPositions.size())
+                    // central‐difference tangent for smoother direction
+                    int N = mesh.animationPositions.size();
+                    int idx = animationIndex % N;
+                    int prevIdx = (idx - 1 + N) % N;
+                    int nextIdx = (idx + 1) % N;
+
+                    glm::vec3 prev = mesh.animationPositions[prevIdx];
+                    glm::vec3 next = mesh.animationPositions[nextIdx];
+                    glm::vec3 dir = glm::normalize(next - prev);
+
+                    if (glm::length(dir) > 1e-6f)  // avoid degenerate
                     {
-                        float angle = computeAngleBetweenPoints(
-                            mesh.animationPositions[animationIndex % mesh.animationPositions.size()],
-                            mesh.animationPositions[(animationIndex + 1) % mesh.animationPositions.size()]);
-                        model = glm::rotate(model, glm::radians(angle), glm::vec3(0.0f, 1.0f, 0.0f));
+                        // raw yaw so +Z faces along the tangent
+                        float rawYaw = atan2(dir.x, dir.z);
+
+                        // wrap to avoid a sudden jump of > π
+                        float delta = rawYaw - lastCarYaw;
+                        if (delta > glm::pi<float>()) rawYaw -= 2.0f * glm::pi<float>();
+                        else if (delta < -glm::pi<float>()) rawYaw += 2.0f * glm::pi<float>();
+
+                        lastCarYaw = rawYaw;
+
+                        // place and rotate
+                        model = glm::translate(model, mesh.animationPositions[idx]);
+                        model = glm::rotate(model, rawYaw, glm::vec3(0, 1, 0));
+                    }
+                    else
+                    {
+                        // fallback: just place
+                        model = glm::translate(model, mesh.animationPositions[idx]);
                     }
                 }
                 else
@@ -392,17 +425,40 @@ int main()
 }
 
 // Requisito 2a: Captura de cliques do mouse para pontos de controle no editor 2D
-void mouse_button_callback(GLFWwindow *window, int button, int action, int mods)
+void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 {
     if (editorMode && button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS)
     {
         double xpos, ypos;
         glfwGetCursorPos(window, &xpos, &ypos);
-        // Converte coordenadas de tela para coordenadas do mundo (plano XY)
-        float x = (2.0f * xpos) / WIDTH - 1.0f;
-        float y = 1.0f - (2.0f * ypos) / HEIGHT;
-        // Ajusta para o plano XY (z = 0)
-        editorControlPoints.push_back(glm::vec3(x * 10.0f, y * 10.0f, 0.0f));
+
+        // Obtem a matriz de projeção e view atuais
+        glm::mat4 view = glm::lookAt(globalConfig.cameraPos, globalConfig.cameraPos + globalConfig.cameraFront, cameraUp);
+        glm::mat4 projection = glm::perspective(glm::radians(globalConfig.fov),
+            static_cast<float>(WIDTH) / HEIGHT,
+            globalConfig.nearPlane, globalConfig.farPlane);
+
+        // Converte coordenadas da tela para NDC
+        float x_ndc = (2.0f * xpos) / WIDTH - 1.0f;
+        float y_ndc = 1.0f - (2.0f * ypos) / HEIGHT;
+
+        // Coordenadas de clipe
+        glm::vec4 clipCoords = glm::vec4(x_ndc, y_ndc, -1.0f, 1.0f);
+
+        // Inversão da projeção
+        glm::vec4 eyeCoords = glm::inverse(projection) * clipCoords;
+        eyeCoords.z = -1.0f;
+        eyeCoords.w = 0.0f;
+
+        // Inversão da view para obter direção no mundo
+        glm::vec3 rayDir = glm::normalize(glm::vec3(glm::inverse(view) * eyeCoords));
+        glm::vec3 rayOrigin = globalConfig.cameraPos;
+
+        // Interseção do raio com o plano XY (z = 0)
+        float t = -rayOrigin.z / rayDir.z;
+        glm::vec3 intersectPoint = rayOrigin + t * rayDir;
+
+        editorControlPoints.push_back(intersectPoint);
     }
 }
 
@@ -431,48 +487,79 @@ std::vector<glm::vec3> generateBSplinePoints(const std::vector<glm::vec3> &contr
     }
     return curvePoints;
 }
-
 // Requisito 2c, 2d: Geração das curvas interna e externa da pista
 void generateTrackMesh(const std::vector<glm::vec3> centerPoints,
-                       float trackWidth,
-                       std::vector<Vertex> &vertices,
-                       std::vector<unsigned int> &indices)
+    float trackWidth,
+    std::vector<Vertex>& vertices,
+    std::vector<unsigned int>& indices)
 {
     vertices.clear();
     indices.clear();
-    const float half = trackWidth * 0.5f;
+    const float halfWidth = trackWidth * 0.5f;
 
+    std::vector<glm::vec3> innerPoints;
+    std::vector<glm::vec3> outerPoints;
+
+    // Gerar pontos das curvas interna e externa
     for (size_t i = 0; i < centerPoints.size(); ++i)
     {
-        glm::vec3 p = centerPoints[i];
-        glm::vec3 p2 = centerPoints[(i + 1) % centerPoints.size()];
+        glm::vec3 A = centerPoints[i];
+        glm::vec3 B = centerPoints[(i + 1) % centerPoints.size()];
 
-        // vetor tangente e normal (plano XY)
-        glm::vec3 t = glm::normalize(p2 - p);
-        glm::vec3 n = glm::normalize(glm::vec3(-t.y, t.x, 0.0f));
+        float w = B.x - A.x;
+        float h = B.y - A.y;
+        float theta = atan2(h, w);
+        float alpha = (w < 0.0f) ? theta - glm::radians(90.0f) : theta + glm::radians(90.0f);
 
-        glm::vec3 inner = p - n * half;
-        glm::vec3 outer = p + n * half;
-        glm::vec3 inner2 = p2 - n * half;
-        glm::vec3 outer2 = p2 + n * half;
+        float cosA = cos(alpha);
+        float sinA = sin(alpha);
 
-        // normal da face (0,0,1) -> depois do swap vira (0,1,0)
-        glm::vec3 faceN = glm::vec3(0.0f, 0.0f, 1.0f);
+        glm::vec3 offset(cosA * halfWidth, sinA * halfWidth, 0.0f);
 
-        Vertex v[4] = {
-            {inner.x, inner.y, inner.z, 0.0f, 0.0f, faceN.x, faceN.y, faceN.z},
-            {outer.x, outer.y, outer.z, 1.0f, 0.0f, faceN.x, faceN.y, faceN.z},
-            {inner2.x, inner2.y, inner2.z, 0.0f, 1.0f, faceN.x, faceN.y, faceN.z},
-            {outer2.x, outer2.y, outer2.z, 1.0f, 1.0f, faceN.x, faceN.y, faceN.z}};
+        glm::vec3 inner = A + offset;
+        glm::vec3 outer = A - offset;
 
-        // adiciona vértices
+        innerPoints.push_back(inner);
+        outerPoints.push_back(outer);
+    }
+
+    // Gerar vértices e índices com normais apropriadas
+    for (size_t i = 0; i < centerPoints.size(); ++i)
+    {
+        size_t next = (i + 1) % centerPoints.size();
+
+        glm::vec3 A = outerPoints[i];
+        glm::vec3 B = outerPoints[next];
+        glm::vec3 C = innerPoints[i];
+        glm::vec3 D = innerPoints[next];
+
+        glm::vec3 AB = B - A;
+        glm::vec3 AC = C - A;
+        glm::vec3 BC = C - B;
+        glm::vec3 BD = D - B;
+
+        glm::vec3 vn1 = glm::normalize(glm::cross(AB, AC));
+        glm::vec3 vn2 = glm::normalize(glm::cross(BC, BD));
+
+        Vertex v0 = { C.x, C.y, C.z, 0.0f, 0.0f, vn1.x, vn1.y, vn1.z }; //inner[i]
+        Vertex v1 = { A.x, A.y, A.z, 1.0f, 0.0f, vn1.x, vn1.y, vn1.z }; //outer[i]
+        Vertex v2 = { B.x, B.y, B.z, 1.0f, 1.0f, vn2.x, vn2.y, vn2.z }; //outer[i+1]
+        Vertex v3 = { D.x, D.y, D.z, 0.0f, 1.0f, vn2.x, vn2.y, vn2.z }; //inner[i+1]
+        
+
         size_t base = vertices.size();
-        vertices.insert(vertices.end(), std::begin(v), std::end(v));
+        vertices.push_back(v0);
+        vertices.push_back(v1);
+        vertices.push_back(v2);
+        vertices.push_back(v3);
 
-        // dois triângulos
-        indices.insert(indices.end(),
-                       {static_cast<unsigned>(base + 0), static_cast<unsigned>(base + 1), static_cast<unsigned>(base + 2),
-                        static_cast<unsigned>(base + 2), static_cast<unsigned>(base + 1), static_cast<unsigned>(base + 3)});
+        indices.push_back(static_cast<unsigned int>(base + 0));
+        indices.push_back(static_cast<unsigned int>(base + 3));
+        indices.push_back(static_cast<unsigned int>(base + 1));
+
+        indices.push_back(static_cast<unsigned int>(base + 1));
+        indices.push_back(static_cast<unsigned int>(base + 3));
+        indices.push_back(static_cast<unsigned int>(base + 2));
     }
 }
 
@@ -539,7 +626,7 @@ void generateSceneFile(const std::string &trackObj, const std::string &carObj, c
          << "NearPlane 0.1\n"
          << "FarPlane 100.0\n"
          << "Sensitivity 0.1\n"
-         << "CameraSpeed 0.05\n"
+         << "CameraSpeed 0.008\n"
          << "AttConstant 1.0\n"
          << "AttLinear 0.09\n"
          << "AttQuadratic 0.032\n"
@@ -571,7 +658,7 @@ void generateSceneFile(const std::string &trackObj, const std::string &carObj, c
     {
         file << "ControlPoint " << cp.x << " " << cp.y << " " << cp.z << "\n";
     }
-    file << "PointsPerSegment 50\n"
+    file << "PointsPerSegment 100\n"
          << "Color 1.0 0.0 0.0 1.0\n"
          << "End\n";
     file.close();
@@ -759,6 +846,77 @@ std::vector<Vertex> setupObj(std::string path)
         }
         else if (type == "f")
         {
+            std::vector<std::string> tokens;
+            std::string token;
+            while (ss >> token) tokens.push_back(token);
+
+            if (tokens.size() < 3) continue; // not a valid face
+
+            auto parse_vertex = [&](const std::string& vertStr, Vertex& vtx) {
+                int vIdx = -1, tIdx = -1, nIdx = -1;
+                size_t firstSlash = vertStr.find('/');
+                size_t secondSlash = vertStr.find('/', firstSlash + 1);
+
+                if (firstSlash == std::string::npos)
+                {
+                    vIdx = std::stoi(vertStr) - 1;
+                }
+                else if (secondSlash == std::string::npos)
+                {
+                    vIdx = std::stoi(vertStr.substr(0, firstSlash)) - 1;
+                    tIdx = std::stoi(vertStr.substr(firstSlash + 1)) - 1;
+                }
+                else if (secondSlash == firstSlash + 1)
+                {
+                    vIdx = std::stoi(vertStr.substr(0, firstSlash)) - 1;
+                    nIdx = std::stoi(vertStr.substr(secondSlash + 1)) - 1;
+                }
+                else
+                {
+                    vIdx = std::stoi(vertStr.substr(0, firstSlash)) - 1;
+                    tIdx = std::stoi(vertStr.substr(firstSlash + 1, secondSlash - firstSlash - 1)) - 1;
+                    nIdx = std::stoi(vertStr.substr(secondSlash + 1)) - 1;
+                }
+
+                if (vIdx >= 0) {
+                    vtx.x = temp_positions[vIdx].x;
+                    vtx.y = temp_positions[vIdx].y;
+                    vtx.z = temp_positions[vIdx].z;
+                }
+                if (tIdx >= 0) {
+                    vtx.s = temp_texcoords[tIdx].x;
+                    vtx.t = temp_texcoords[tIdx].y;
+                }
+                else {
+                    vtx.s = vtx.t = 0.0f;
+                }
+                if (nIdx >= 0) {
+                    vtx.nx = temp_normals[nIdx].x;
+                    vtx.ny = temp_normals[nIdx].y;
+                    vtx.nz = temp_normals[nIdx].z;
+                }
+                else {
+                    vtx.nx = vtx.ny = vtx.nz = 0.0f;
+                }
+                };
+
+            // Triangle fan method: v0, v1, v2; v0, v2, v3; v0, v3, v4; ...
+            Vertex v0, v1, v2;
+            parse_vertex(tokens[0], v0);
+            for (size_t i = 1; i + 1 < tokens.size(); ++i)
+            {
+                parse_vertex(tokens[i], v1);
+                parse_vertex(tokens[i + 1], v2);
+                vertices.push_back(v0);
+                vertices.push_back(v1);
+                vertices.push_back(v2);
+            }
+        }
+
+
+        /*
+        else if (type == "f")
+        {
             std::string v1, v2, v3;
             ss >> v1 >> v2 >> v3;
             int vIdx[3], tIdx[3], nIdx[3];
@@ -768,7 +926,7 @@ std::vector<Vertex> setupObj(std::string path)
                 size_t p1 = verts[i].find('/');
                 size_t p2 = verts[i].find('/', p1 + 1);
                 vIdx[i] = std::stoi(verts[i].substr(0, p1)) - 1;
-                tIdx[i] = std::stoi(verts[i].substr(p1 + 1, p2 - p1 - 1)) - 1;
+                tIdx[i] = std::stoi(verts[i].substr(p1 + 1, p2 - p1 - 1)) - 1; //Line with error
                 nIdx[i] = std::stoi(verts[i].substr(p2 + 1)) - 1;
             }
             for (int i = 0; i < 3; ++i)
@@ -784,7 +942,7 @@ std::vector<Vertex> setupObj(std::string path)
                 v.nz = temp_normals[nIdx[i]].z;
                 vertices.push_back(v);
             }
-        }
+        }*/
     }
     file.close();
     return vertices;
