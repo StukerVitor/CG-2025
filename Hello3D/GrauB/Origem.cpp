@@ -1,61 +1,56 @@
-﻿// Objetivo: Implementar um modelador de pistas de corrida e visualizador de modelos 3D
-// conforme especificado no documento CGR-TrabalhoGB-completo-3.pdf, incluindo editor de
-// pistas 2D, geração de curvas B-Spline, malha poligonal da pista, exportação para OBJ,
-// e animação de um carro no visualizador 3D com modelo de iluminação completo.
+﻿// File: main.cpp
+#include "GeometryObjects.hpp"
 
-// *** IMPLEMENTAÇÃO DA STB_IMAGE *** -----------------------------------------
 #define STB_IMAGE_IMPLEMENTATION
 #include "../../Common/include/stb_image.h"
 
 // *** BIBLIOTECAS PADRÃO *** ------------------------------------------------
 #include <iostream>
 #include <string>
-#include <assert.h>
+#include <cassert>
 #include <fstream>
 #include <sstream>
 #include <vector>
 #include <unordered_map>
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtc/type_ptr.hpp>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include "Shader.h"
 
 // ============================================================================
-// ESTRUTURAS DE DADOS
+// ESTRUTURAS DE DADOS AUXILIARES (para renderização e lógica do aplicativo)
 // ============================================================================
 
-struct Vertex
-{
+// Estrutura para armazenar dados de um único vértice em OpenGL
+struct Vertex {
     float x, y, z;    // Posição do vértice
     float s, t;       // Coordenadas de textura
     float nx, ny, nz; // Vetor normal
 };
 
-struct Material
-{
+// Estrutura para armazenar parâmetros de material
+struct Material {
     float kaR, kaG, kaB;     // Coeficiente ambiente
     float kdR, kdG, kdB;     // Coeficiente difuso
     float ksR, ksG, ksB;     // Coeficiente especular
     float ns;                // Expoente especular
-    std::string textureName; // Nome do arquivo de textura
+    std::string textureName; // Nome do arquivo de textura (map_Kd)
 };
 
-struct GlobalConfig
-{
+// Configuração global do aplicativo (luz, câmera, parâmetros de fog, etc.)
+struct GlobalConfig {
     glm::vec3 lightPos, lightColor;   // Posição e cor da luz
     glm::vec3 cameraPos, cameraFront; // Posição e direção da câmera
-    GLfloat fov, nearPlane, farPlane; // Projeção perspectiva
-    GLfloat sensitivity, cameraSpeed; // Sensibilidade e velocidade da câmera
-    // Requisito 1: Adicionando parâmetros para atenuação e fog
-    float attConstant, attLinear, attQuadratic; // Fatores de atenuação
-    glm::vec3 fogColor;                         // Cor do nevoeiro
-    float fogStart, fogEnd;                     // Distâncias de início e fim do nevoeiro
+    GLfloat   fov, nearPlane, farPlane; // Projeção perspectiva
+    GLfloat   sensitivity, cameraSpeed; // Sensibilidade e velocidade da câmera
+
+    // Requisito 1: Parâmetros de atenuação e fog
+    float   attConstant, attLinear, attQuadratic; // Fatores de atenuação
+    glm::vec3 fogColor;                            // Cor do nevoeiro
+    float   fogStart, fogEnd;                      // Distâncias de início e fim do nevoeiro
 };
 
-struct Mesh
-{
+// Estrutura que representa um “Mesh” no contexto da cena (nós o chamaremos de SceneMesh para não conflitar com a classe Mesh acima)
+struct SceneMesh {
     std::string name;
     std::string objFilePath, mtlFilePath;
     glm::vec3 scale, position, rotation;
@@ -65,12 +60,12 @@ struct Mesh
     GLuint VAO;
     Material material;
     GLuint textureID;
-    // Requisito 1: Array de transformações para animação
+    // Requisito 1: Array de transformações para animação do carro
     std::vector<glm::vec3> animationPositions; // Posições para cada passo de animação
 };
 
-struct BSplineCurve
-{
+// Estrutura para curvas B-Spline
+struct BSplineCurve {
     std::string name;
     std::vector<glm::vec3> controlPoints; // Pontos de controle
     std::vector<glm::vec3> curvePoints;   // Pontos discretizados da curva
@@ -83,55 +78,64 @@ struct BSplineCurve
 // ============================================================================
 // PROTÓTIPOS DE FUNÇÕES
 // ============================================================================
-void key_callback(GLFWwindow *window, int key, int scancode, int action, int mode);
-void mouse_callback(GLFWwindow *window, double xpos, double ypos);
-void mouse_button_callback(GLFWwindow *window, int button, int action, int mods);
-void readSceneFile(const std::string sceneFilePath, std::unordered_map<std::string, Mesh> *meshes,
-                   std::vector<std::string> *meshList, std::unordered_map<std::string, BSplineCurve> *bSplineCurves,
-                   GlobalConfig *globalConfig);
-GLuint setupTexture(const std::string path);
-std::vector<Vertex> setupObj(const std::string path);
-Material setupMtl(const std::string path);
-int setupGeometry(std::vector<Vertex> &vertices);
-std::vector<glm::vec3> generateBSplinePoints(const std::vector<glm::vec3> &controlPoints, int pointsPerSegment);
-GLuint generateControlPointsBuffer(const std::vector<glm::vec3> controlPoints);
-BSplineCurve createBSplineCurve(const std::vector<glm::vec3> controlPoints, int pointsPerSegment);
-void generateTrackMesh(std::vector<glm::vec3> centerPoints, float trackWidth, std::vector<Vertex> &vertices,
-                       std::vector<unsigned int> &indices);
-void exportTrackToOBJ(const std::vector<Vertex> &vertices, const std::vector<unsigned int> &indices,
-                      const std::string &filename);
-void exportAnimationPoints(const std::vector<glm::vec3> &points, const std::string &filename);
-float computeAngleBetweenPoints(const glm::vec3 &p1, const glm::vec3 &p2);
+
+void key_callback(GLFWwindow* window, int key, int scancode, int action, int mode);
+void mouse_callback(GLFWwindow* window, double xpos, double ypos);
+void mouse_button_callback(GLFWwindow* window, int button, int action, int mods);
+
+void readSceneFile(const std::string&,
+    std::unordered_map<std::string, SceneMesh>*,
+    std::vector<std::string>*,
+    std::unordered_map<std::string, BSplineCurve>*,
+    GlobalConfig*);
+
+GLuint setupTexture(std::string filename);
+std::vector<Vertex> setupObj(std::string path);
+Material setupMtl(std::string path);
+int setupGeometry(std::vector<Vertex>& vertices);
+std::vector<glm::vec3> generateBSplinePoints(const std::vector<glm::vec3>& controlPoints, int pointsPerSegment);
+GLuint generateControlPointsBuffer(std::vector<glm::vec3> controlPoints);
+BSplineCurve createBSplineCurve(std::vector<glm::vec3> controlPoints, int pointsPerSegment);
+void generateTrackMesh(const std::vector<glm::vec3> centerPoints, float trackWidth,
+    std::vector<Vertex>& vertices, std::vector<unsigned int>& indices);
+void exportTrackToOBJ(const std::vector<Vertex>& vertices, const std::vector<unsigned int>& indices,
+    const std::string& filename);
+void exportAnimationPoints(const std::vector<glm::vec3>& points, const std::string& filename);
+void generateSceneFile(const std::string& trackObj, const std::string& carObj,
+    const std::string& animFile, const std::string& sceneFile,
+    const std::vector<glm::vec3>& controlPoints);
+float computeAngleBetweenPoints(const glm::vec3& p1, const glm::vec3& p2);
 
 // ============================================================================
 // VARIÁVEIS GLOBAIS
 // ============================================================================
+
 GlobalConfig globalConfig;
 const GLuint WIDTH = 1000, HEIGHT = 1000;
 glm::vec3 cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
-bool firstMouse = true;
-float lastX, lastY, pitch = 0.0f, yaw = -90.0f;
-bool moveW = false, moveA = false, moveS = false, moveD = false;
-bool editorMode = true;                     // Requisito 2a: Modo editor ativo inicialmente
-std::vector<glm::vec3> editorControlPoints; // Requisito 2a: Pontos de controle clicados
-int animationIndex = 0;                     // Índice para animação do carro
-float trackWidth = 1.0f;                    // Largura da pista
-GLuint showCurves = 1;
+bool      firstMouse = true;
+float     lastX, lastY, pitch = 0.0f, yaw = -90.0f;
+bool      moveW = false, moveA = false, moveS = false, moveD = false;
+bool      editorMode = true;                     // Requisito 2a: Modo editor ativo inicialmente
+std::vector<glm::vec3> editorControlPoints;      // Requisito 2a: Pontos de controle clicados
+int       animationIndex = 0;                    // Índice para animação do carro
+float     trackWidth = 1.0f;                 // Largura da pista
+GLuint    showCurves = 1;
 
-// Adicionando as variáveis que antes estavam no main como globais
-std::unordered_map<std::string, Mesh> meshes;                // Agora global
-std::vector<std::string> meshList;                           // Agora global
-std::unordered_map<std::string, BSplineCurve> bSplineCurves; // Agora global
+// Variáveis que antes ficavam dentro do main ficam agora globais:
+std::unordered_map<std::string, SceneMesh> meshes;                // Agora global
+std::vector<std::string>                 meshList;                // Agora global
+std::unordered_map<std::string, BSplineCurve> bSplineCurves;      // Agora global
 
-double lastFrameTime = glfwGetTime();
-float  animAccumulator = 0.0f;          // quanto tempo já acumulou
-const  float STEP_TIME = 1.0f / 30.0f; // 30 pontos da animação por segundo
+double lastFrameTime = 0.0;
+float  animAccumulator = 0.0f;              // Quanto tempo já acumulou para animação
+const float STEP_TIME = 1.0f / 30.0f;       // 30 frames de animação por segundo
 
 // ============================================================================
-// SHADERS
+// SHADERS (modelo de iluminação completo: ambiente + difusa + especular + atenuação + fog)
 // ============================================================================
-// Requisito 1: Shader com modelo de iluminação completo (ambiente + difusa + especular + atenuação + fog)
-const char *vertexShaderSource = R"glsl(
+
+const char* vertexShaderSource = R"glsl(
 #version 450 core
 layout (location = 0) in vec3 aPos;
 layout (location = 1) in vec2 aTexCoord;
@@ -147,13 +151,13 @@ uniform mat4 projection;
 
 void main() {
     gl_Position = projection * view * model * vec4(aPos, 1.0);
-    FragPos = vec3(model * vec4(aPos, 1.0));
-    Normal = mat3(transpose(inverse(model))) * aNormal;
-    TexCoord = aTexCoord;
+    FragPos     = vec3(model * vec4(aPos, 1.0));
+    Normal      = mat3(transpose(inverse(model))) * aNormal;
+    TexCoord    = aTexCoord;
 }
 )glsl";
 
-const char *fragmentShaderSource = R"glsl(
+const char* fragmentShaderSource = R"glsl(
 #version 450 core
 out vec4 FragColor;
 
@@ -178,31 +182,31 @@ void main() {
     vec3 ambient = vec3(kaR, kaG, kaB) * lightColor;
 
     // Diffuse
-    vec3 norm = normalize(Normal);
+    vec3 norm     = normalize(Normal);
     vec3 lightDir = normalize(lightPos - FragPos);
-    float diff = max(dot(norm, lightDir), 0.0);
-    vec3 diffuse = vec3(kdR, kdG, kdB) * diff * lightColor;
+    float diff    = max(dot(norm, lightDir), 0.0);
+    vec3 diffuse  = vec3(kdR, kdG, kdB) * diff * lightColor;
 
     // Specular
-    vec3 viewDir = normalize(cameraPos - FragPos);
+    vec3 viewDir    = normalize(cameraPos - FragPos);
     vec3 reflectDir = reflect(-lightDir, norm);
-    float spec = pow(max(dot(viewDir, reflectDir), 0.0), ns);
-    vec3 specular = vec3(ksR, ksG, ksB) * spec * lightColor;
+    float spec      = pow(max(dot(viewDir, reflectDir), 0.0), ns);
+    vec3 specular   = vec3(ksR, ksG, ksB) * spec * lightColor;
 
-    // Attenuation
-    float distance = length(lightPos - FragPos);
+    // Atenuação
+    float distance    = length(lightPos - FragPos);
     float attenuation = 1.0 / (attConstant + attLinear * distance + attQuadratic * distance * distance);
 
-    // Combine lighting
+    // Combina iluminação
     vec3 lighting = (ambient + diffuse + specular) * attenuation;
 
-    // Texture
+    // Cor da textura
     vec4 texColor = texture(tex, TexCoord);
 
     // Fog
     float distToCamera = length(cameraPos - FragPos);
-    float fogFactor = clamp((fogEnd - distToCamera) / (fogEnd - fogStart), 0.0, 1.0);
-    vec3 finalColor = mix(fogColor, lighting * texColor.rgb, fogFactor);
+    float fogFactor    = clamp((fogEnd - distToCamera) / (fogEnd - fogStart), 0.0, 1.0);
+    vec3 finalColor    = mix(fogColor, lighting * texColor.rgb, fogFactor);
 
     FragColor = vec4(finalColor, texColor.a);
 }
@@ -211,19 +215,19 @@ void main() {
 // ============================================================================
 // FUNÇÃO PRINCIPAL
 // ============================================================================
-int main()
-{
+
+int main() {
     // Inicialização do GLFW e GLAD
     glfwInit();
-    GLFWwindow *window = glfwCreateWindow(WIDTH, HEIGHT, "Modelador de Pistas e Visualizador 3D", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(WIDTH, HEIGHT, "Modelador de Pistas e Visualizador 3D", nullptr, nullptr);
     assert(window && "Falha ao criar janela GLFW");
     glfwMakeContextCurrent(window);
     glfwSetKeyCallback(window, key_callback);
     glfwSetCursorPosCallback(window, mouse_callback);
     glfwSetMouseButtonCallback(window, mouse_button_callback);
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL); // Requisito 2a: Cursor visível no editor
-    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
-    {
+
+    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
         std::cerr << "Falha ao inicializar GLAD\n";
         return -1;
     }
@@ -251,9 +255,11 @@ int main()
     globalConfig.fogStart = 5.0f;
     globalConfig.fogEnd = 50.0f;
 
-    // Requisito 2a: Modo editor para clicar pontos de controle
-    while (!glfwWindowShouldClose(window))
-    {
+    lastFrameTime = glfwGetTime();
+    animAccumulator = 0.0f;
+
+    // Loop principal
+    while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -264,31 +270,31 @@ int main()
         lastFrameTime = now;
         animAccumulator += deltaTime;
 
-        // Atualiza câmera
-        glm::mat4 view = glm::lookAt(globalConfig.cameraPos, globalConfig.cameraPos + globalConfig.cameraFront, cameraUp);
+        // Atualiza câmera e projeção
+        glm::mat4 view = glm::lookAt(globalConfig.cameraPos,
+            globalConfig.cameraPos + globalConfig.cameraFront,
+            cameraUp);
         glm::mat4 projection = glm::perspective(glm::radians(globalConfig.fov),
-                                                static_cast<float>(WIDTH) / HEIGHT,
-                                                globalConfig.nearPlane, globalConfig.farPlane);
+            static_cast<float>(WIDTH) / HEIGHT,
+            globalConfig.nearPlane,
+            globalConfig.farPlane);
 
-        if (editorMode)
-        {
+        if (editorMode) {
             // Requisito 2a: Desenha pontos de controle no editor 2D (plano XY)
             glUseProgram(lineShader.getId());
             glUniformMatrix4fv(glGetUniformLocation(lineShader.getId(), "view"), 1, GL_FALSE, glm::value_ptr(view));
             glUniformMatrix4fv(glGetUniformLocation(lineShader.getId(), "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-            if (!editorControlPoints.empty())
-            {
+            if (!editorControlPoints.empty()) {
                 GLuint VAO = generateControlPointsBuffer(editorControlPoints);
                 glUniform4f(glGetUniformLocation(lineShader.getId(), "finalColor"), 1.0f, 1.0f, 0.0f, 1.0f);
                 glBindVertexArray(VAO);
-                glDrawArrays(GL_POINTS, 0, editorControlPoints.size());
+                glDrawArrays(GL_POINTS, 0, static_cast<GLsizei>(editorControlPoints.size()));
                 glBindVertexArray(0);
                 glDeleteVertexArrays(1, &VAO);
             }
         }
-        else
-        {
-            //Movimentação de camera durante animação
+        else {
+            // Movimentação de câmera durante animação
             if (moveW)
                 globalConfig.cameraPos += globalConfig.cameraFront * globalConfig.cameraSpeed;
             if (moveA)
@@ -312,18 +318,15 @@ int main()
             glUniform1f(glGetUniformLocation(objectShader.getId(), "attLinear"), globalConfig.attLinear);
             glUniform1f(glGetUniformLocation(objectShader.getId(), "attQuadratic"), globalConfig.attQuadratic);
 
-            // Desenha malhas
+            // Desenha todas as SceneMesh carregadas
             float lastCarYaw = 0.0f;
-            for (auto &pair : meshes)
-            {
-                Mesh &mesh = pair.second;
-                glm::mat4 model(1.0f);
+            for (auto& pair : meshes) {
+                SceneMesh& mesh = pair.second;
+                glm::mat4  model(1.0f);
 
                 // Requisito 3d: Animação do carro
-                if (mesh.name == "Carro" && mesh.animationPositions.size() >= 3)
-                {
-                    // central‐difference tangent for smoother direction
-                    int N = mesh.animationPositions.size();
+                if (mesh.name == "Carro" && mesh.animationPositions.size() >= 3) {
+                    int N = static_cast<int>(mesh.animationPositions.size());
                     int idx = animationIndex % N;
                     int prevIdx = (idx - 1 + N) % N;
                     int nextIdx = (idx + 1) % N;
@@ -332,35 +335,35 @@ int main()
                     glm::vec3 next = mesh.animationPositions[nextIdx];
                     glm::vec3 dir = glm::normalize(next - prev);
 
-                    if (glm::length(dir) > 1e-6f)  // avoid degenerate
-                    {
-                        // raw yaw so +Z faces along the tangent
+                    if (glm::length(dir) > 1e-6f) {
+                        // Cálculo do yaw para alinhar o carro com a tangente
                         float rawYaw = atan2(dir.x, dir.z);
 
-                        // wrap to avoid a sudden jump of > π
+                        // Ajuste para evitar pulos maiores que π
                         float delta = rawYaw - lastCarYaw;
                         if (delta > glm::pi<float>()) rawYaw -= 2.0f * glm::pi<float>();
                         else if (delta < -glm::pi<float>()) rawYaw += 2.0f * glm::pi<float>();
 
                         lastCarYaw = rawYaw;
 
-                        // place and rotate
+                        // Posiciona e rotaciona
                         model = glm::translate(model, mesh.animationPositions[idx]);
                         model = glm::rotate(model, rawYaw, glm::vec3(0, 1, 0));
                     }
-                    else
-                    {
-                        // fallback: just place
+                    else {
+                        // fallback: apenas posiciona
                         model = glm::translate(model, mesh.animationPositions[idx]);
                     }
                 }
-                else
-                {
+                else {
                     model = glm::translate(model, mesh.position);
                 }
+
+                // Aplica rotações em X, Y, Z
                 model = glm::rotate(model, glm::radians(mesh.angle.x), glm::vec3(1.0f, 0.0f, 0.0f));
                 model = glm::rotate(model, glm::radians(mesh.angle.y), glm::vec3(0.0f, 1.0f, 0.0f));
                 model = glm::rotate(model, glm::radians(mesh.angle.z), glm::vec3(0.0f, 0.0f, 1.0f));
+                // Aplica escala
                 model = glm::scale(model, mesh.scale);
 
                 glUniformMatrix4fv(glGetUniformLocation(objectShader.getId(), "model"), 1, GL_FALSE, glm::value_ptr(model));
@@ -375,6 +378,7 @@ int main()
                 glUniform1f(glGetUniformLocation(objectShader.getId(), "ksB"), mesh.material.ksB);
                 glUniform1f(glGetUniformLocation(objectShader.getId(), "ns"), mesh.material.ns);
 
+                // Renderiza o mesh
                 glBindVertexArray(mesh.VAO);
                 glActiveTexture(GL_TEXTURE0);
                 glBindTexture(GL_TEXTURE_2D, mesh.textureID);
@@ -383,19 +387,18 @@ int main()
             }
 
             // Desenha curvas B-Spline
-            if (showCurves)
-            {
+            if (showCurves) {
                 glUseProgram(lineShader.getId());
                 glUniformMatrix4fv(glGetUniformLocation(lineShader.getId(), "view"), 1, GL_FALSE, glm::value_ptr(view));
                 glUniformMatrix4fv(glGetUniformLocation(lineShader.getId(), "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-                for (const auto &pair : bSplineCurves)
-                {
-                    const BSplineCurve &bc = pair.second;
+                for (const auto& pair : bSplineCurves) {
+                    const BSplineCurve& bc = pair.second;
                     glUniform4fv(glGetUniformLocation(lineShader.getId(), "finalColor"), 1, glm::value_ptr(bc.color));
                     glBindVertexArray(bc.VAO);
                     glDrawArrays(GL_LINE_STRIP, 0, static_cast<GLsizei>(bc.curvePoints.size()));
                     glBindVertexArray(0);
 
+                    // Puntos de controle em amarelo
                     glUniform4f(glGetUniformLocation(lineShader.getId(), "finalColor"), 1.0f, 1.0f, 0.0f, 1.0f);
                     glBindVertexArray(bc.controlPointsVAO);
                     glDrawArrays(GL_POINTS, 0, static_cast<GLsizei>(bc.controlPoints.size()));
@@ -403,11 +406,9 @@ int main()
                 }
             }
 
-            // Atualiza animação
-            while (animAccumulator >= STEP_TIME)          // avança só quando passar o step
-            {
-                animationIndex =
-                    (animationIndex + 1) % meshes["Carro"].animationPositions.size();
+            // Atualiza a animação do carro
+            while (animAccumulator >= STEP_TIME) {
+                animationIndex = (animationIndex + 1) % meshes["Carro"].animationPositions.size();
                 animAccumulator -= STEP_TIME;
             }
         }
@@ -416,31 +417,38 @@ int main()
     }
 
     // Liberação de recursos
-    for (const auto &pair : meshes)
+    for (const auto& pair : meshes) {
         glDeleteVertexArrays(1, &pair.second.VAO);
-    for (const auto &pair : bSplineCurves)
+    }
+    for (const auto& pair : bSplineCurves) {
         glDeleteVertexArrays(1, &pair.second.VAO);
+    }
     glfwTerminate();
     return 0;
 }
 
+// ============================================================================
+// CALLBACKS DE INPUT E LÓGICA DE MOUSE
+// ============================================================================
+
 // Requisito 2a: Captura de cliques do mouse para pontos de controle no editor 2D
-void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
-{
-    if (editorMode && button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS)
-    {
+void mouse_button_callback(GLFWwindow* window, int button, int action, int mods) {
+    if (editorMode && button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
         double xpos, ypos;
         glfwGetCursorPos(window, &xpos, &ypos);
 
         // Obtem a matriz de projeção e view atuais
-        glm::mat4 view = glm::lookAt(globalConfig.cameraPos, globalConfig.cameraPos + globalConfig.cameraFront, cameraUp);
+        glm::mat4 view = glm::lookAt(globalConfig.cameraPos,
+            globalConfig.cameraPos + globalConfig.cameraFront,
+            cameraUp);
         glm::mat4 projection = glm::perspective(glm::radians(globalConfig.fov),
             static_cast<float>(WIDTH) / HEIGHT,
-            globalConfig.nearPlane, globalConfig.farPlane);
+            globalConfig.nearPlane,
+            globalConfig.farPlane);
 
         // Converte coordenadas da tela para NDC
-        float x_ndc = (2.0f * xpos) / WIDTH - 1.0f;
-        float y_ndc = 1.0f - (2.0f * ypos) / HEIGHT;
+        float x_ndc = (2.0f * static_cast<float>(xpos)) / WIDTH - 1.0f;
+        float y_ndc = 1.0f - (2.0f * static_cast<float>(ypos)) / HEIGHT;
 
         // Coordenadas de clipe
         glm::vec4 clipCoords = glm::vec4(x_ndc, y_ndc, -1.0f, 1.0f);
@@ -463,8 +471,7 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 }
 
 // Requisito 2b: Geração de curva B-Spline a partir dos pontos de controle
-std::vector<glm::vec3> generateBSplinePoints(const std::vector<glm::vec3> &controlPoints, int pointsPerSegment)
-{
+std::vector<glm::vec3> generateBSplinePoints(const std::vector<glm::vec3>& controlPoints, int pointsPerSegment) {
     std::vector<glm::vec3> curvePoints;
     if (controlPoints.size() < 4)
         return curvePoints; // Mínimo 4 pontos para B-Spline cúbica
@@ -473,20 +480,23 @@ std::vector<glm::vec3> generateBSplinePoints(const std::vector<glm::vec3> &contr
         -1.0f / 6.0f, 3.0f / 6.0f, -3.0f / 6.0f, 1.0f / 6.0f,
         3.0f / 6.0f, -6.0f / 6.0f, 3.0f / 6.0f, 0.0f,
         -3.0f / 6.0f, 0.0f, 3.0f / 6.0f, 0.0f,
-        1.0f / 6.0f, 4.0f / 6.0f, 1.0f / 6.0f, 0.0f);
+        1.0f / 6.0f, 4.0f / 6.0f, 1.0f / 6.0f, 0.0f
+    );
 
     float step = 1.0f / pointsPerSegment;
-    for (size_t i = 0; i < controlPoints.size() - 3; ++i)
-    {
-        for (float t = 0.0f; t <= 1.0f; t += step)
-        {
+    for (size_t i = 0; i + 3 < controlPoints.size(); ++i) {
+        for (float t = 0.0f; t <= 1.0f; t += step) {
             glm::vec4 T(t * t * t, t * t, t, 1.0f);
-            glm::mat4x3 G(controlPoints[i], controlPoints[i + 1], controlPoints[i + 2], controlPoints[i + 3]);
+            glm::mat4x3 G(controlPoints[i],
+                controlPoints[i + 1],
+                controlPoints[i + 2],
+                controlPoints[i + 3]);
             curvePoints.push_back(G * BSplineMatrix * T);
         }
     }
     return curvePoints;
 }
+
 // Requisito 2c, 2d: Geração das curvas interna e externa da pista
 void generateTrackMesh(const std::vector<glm::vec3> centerPoints,
     float trackWidth,
@@ -501,8 +511,7 @@ void generateTrackMesh(const std::vector<glm::vec3> centerPoints,
     std::vector<glm::vec3> outerPoints;
 
     // Gerar pontos das curvas interna e externa
-    for (size_t i = 0; i < centerPoints.size(); ++i)
-    {
+    for (size_t i = 0; i < centerPoints.size(); ++i) {
         glm::vec3 A = centerPoints[i];
         glm::vec3 B = centerPoints[(i + 1) % centerPoints.size()];
 
@@ -524,8 +533,7 @@ void generateTrackMesh(const std::vector<glm::vec3> centerPoints,
     }
 
     // Gerar vértices e índices com normais apropriadas
-    for (size_t i = 0; i < centerPoints.size(); ++i)
-    {
+    for (size_t i = 0; i < centerPoints.size(); ++i) {
         size_t next = (i + 1) % centerPoints.size();
 
         glm::vec3 A = outerPoints[i];
@@ -541,11 +549,10 @@ void generateTrackMesh(const std::vector<glm::vec3> centerPoints,
         glm::vec3 vn1 = glm::normalize(glm::cross(AB, AC));
         glm::vec3 vn2 = glm::normalize(glm::cross(BC, BD));
 
-        Vertex v0 = { C.x, C.y, C.z, 0.0f, 0.0f, vn1.x, vn1.y, vn1.z }; //inner[i]
-        Vertex v1 = { A.x, A.y, A.z, 1.0f, 0.0f, vn1.x, vn1.y, vn1.z }; //outer[i]
-        Vertex v2 = { B.x, B.y, B.z, 1.0f, 1.0f, vn2.x, vn2.y, vn2.z }; //outer[i+1]
-        Vertex v3 = { D.x, D.y, D.z, 0.0f, 1.0f, vn2.x, vn2.y, vn2.z }; //inner[i+1]
-        
+        Vertex v0 = { C.x, C.y, C.z, 0.0f, 0.0f, vn1.x, vn1.y, vn1.z }; // inner[i]
+        Vertex v1 = { A.x, A.y, A.z, 1.0f, 0.0f, vn1.x, vn1.y, vn1.z }; // outer[i]
+        Vertex v2 = { B.x, B.y, B.z, 1.0f, 1.0f, vn2.x, vn2.y, vn2.z }; // outer[i+1]
+        Vertex v3 = { D.x, D.y, D.z, 0.0f, 1.0f, vn2.x, vn2.y, vn2.z }; // inner[i+1]
 
         size_t base = vertices.size();
         vertices.push_back(v0);
@@ -564,110 +571,109 @@ void generateTrackMesh(const std::vector<glm::vec3> centerPoints,
 }
 
 // Requisito 2h: Exportação da malha da pista para OBJ
-void exportTrackToOBJ(const std::vector<Vertex> &vertices, const std::vector<unsigned int> &indices,
-                      const std::string &filename)
+void exportTrackToOBJ(const std::vector<Vertex>& vertices,
+    const std::vector<unsigned int>& indices,
+    const std::string& filename)
 {
     std::ofstream file(filename);
-    if (!file.is_open())
-    {
+    if (!file.is_open()) {
         std::cerr << "Falha ao criar arquivo OBJ " << filename << std::endl;
         return;
     }
 
-    // Requisito 2h: Inversão de Y com Z (plano XZ como chão)
-    for (const auto &v : vertices)
-    {
+    // Inversão de Y com Z (plano XZ como chão)
+    for (const auto& v : vertices) {
         file << "v " << v.x << " " << v.z << " " << v.y << "\n";
     }
-    for (const auto &v : vertices)
-    {
+    for (const auto& v : vertices) {
         file << "vt " << v.s << " " << v.t << "\n";
     }
-    for (const auto &v : vertices)
-    {
+    for (const auto& v : vertices) {
         file << "vn " << v.nx << " " << v.ny << " " << v.nz << "\n";
     }
-    for (size_t i = 0; i < indices.size(); i += 3)
-    {
-        file << "f " << (indices[i] + 1) << "/" << (indices[i] + 1) << "/" << (indices[i] + 1) << " "
-             << (indices[i + 1] + 1) << "/" << (indices[i + 1] + 1) << "/" << (indices[i + 1] + 1) << " "
-             << (indices[i + 2] + 1) << "/" << (indices[i + 2] + 1) << "/" << (indices[i + 2] + 1) << "\n";
+    for (size_t i = 0; i < indices.size(); i += 3) {
+        file << "f "
+            << (indices[i] + 1) << "/" << (indices[i] + 1) << "/" << (indices[i] + 1) << " "
+            << (indices[i + 1] + 1) << "/" << (indices[i + 1] + 1) << "/" << (indices[i + 1] + 1) << " "
+            << (indices[i + 2] + 1) << "/" << (indices[i + 2] + 1) << "/" << (indices[i + 2] + 1) << "\n";
     }
     file.close();
 }
 
 // Requisito 2i: Exportação dos pontos de animação
-void exportAnimationPoints(const std::vector<glm::vec3> &points,
-                           const std::string &filename)
-{
+void exportAnimationPoints(const std::vector<glm::vec3>& points, const std::string& filename) {
     std::ofstream file(filename);
-    if (!file)
-    {
+    if (!file.is_open()) {
         std::cerr << "Falha ao criar " << filename << '\n';
         return;
     }
 
-    for (const auto &p : points)
-        //  swap Y→Z para alinhar com o chão XZ
+    for (const auto& p : points) {
+        // Troca Y↔Z para alinhar com o chão XZ
         file << p.x << ' ' << 0.0f << ' ' << p.y << '\n';
+    }
+    file.close();
 }
 
+
 // Requisito 2j: Geração do arquivo de cena
-void generateSceneFile(const std::string &trackObj, const std::string &carObj, const std::string &animFile,
-                       const std::string &sceneFile, const std::vector<glm::vec3> &controlPoints)
+void generateSceneFile(const std::string& trackObj, const std::string& carObj, const std::string& animFile,
+    const std::string& sceneFile, const std::vector<glm::vec3>& controlPoints)
 {
     std::ofstream file(sceneFile);
     file << "Type GlobalConfig Config\n"
-         << "LightPos 10.0 10.0 10.0\n"
-         << "LightColor 1.0 1.0 1.0\n"
-         << "CameraPos 0.0 5.0 10.0\n"
-         << "CameraFront 0.0 0.0 -1.0\n"
-         << "Fov 45.0\n"
-         << "NearPlane 0.1\n"
-         << "FarPlane 100.0\n"
-         << "Sensitivity 0.1\n"
-         << "CameraSpeed 0.008\n"
-         << "AttConstant 1.0\n"
-         << "AttLinear 0.09\n"
-         << "AttQuadratic 0.032\n"
-         << "FogColor 0.5 0.5 0.5\n"
-         << "FogStart 5.0\n"
-         << "FogEnd 50.0\n"
-         << "End\n"
-         << "Type Mesh Track\n"
-         << "Obj " << trackObj << "\n"
-         << "Mtl track.mtl\n"
-         << "Scale 1.0 1.0 1.0\n"
-         << "Position 0.0 0.0 0.0\n"
-         << "Rotation 0.0 1.0 0.0\n"
-         << "Angle 0.0 0.0 0.0\n"
-         << "IncrementalAngle 0\n"
-         << "End\n"
-         << "Type Mesh Carro\n"
-         << "Obj " << carObj << "\n"
-         << "Mtl car.mtl\n"
-         << "Scale 0.5 0.5 0.5\n"
-         << "Position 0.0 0.0 0.0\n"
-         << "Rotation 0.0 1.0 0.0\n"
-         << "Angle 0.0 0.0 0.0\n"
-         << "IncrementalAngle 0\n"
-         << "AnimationFile " << animFile << "\n"
-         << "End\n"
-         << "Type BSplineCurve Curve1\n";
-    for (const auto &cp : controlPoints)
+        << "LightPos 10.0 10.0 10.0\n"
+        << "LightColor 1.0 1.0 1.0\n"
+        << "CameraPos 0.0 5.0 10.0\n"
+        << "CameraFront 0.0 0.0 -1.0\n"
+        << "Fov 45.0\n"
+        << "NearPlane 0.1\n"
+        << "FarPlane 100.0\n"
+        << "Sensitivity 0.1\n"
+        << "CameraSpeed 0.008\n"
+        << "AttConstant 1.0\n"
+        << "AttLinear 0.09\n"
+        << "AttQuadratic 0.032\n"
+        << "FogColor 0.5 0.5 0.5\n"
+        << "FogStart 5.0\n"
+        << "FogEnd 50.0\n"
+        << "End\n"
+        << "Type Mesh Track\n"
+        << "Obj " << trackObj << "\n"
+        << "Mtl track.mtl\n"
+        << "Scale 1.0 1.0 1.0\n"
+        << "Position 0.0 0.0 0.0\n"
+        << "Rotation 0.0 1.0 0.0\n"
+        << "Angle 0.0 0.0 0.0\n"
+        << "IncrementalAngle 0\n"
+        << "End\n"
+        << "Type Mesh Carro\n"
+        << "Obj " << carObj << "\n"
+        << "Mtl car.mtl\n"
+        << "Scale 0.5 0.5 0.5\n"
+        << "Position 0.0 0.0 0.0\n"
+        << "Rotation 0.0 1.0 0.0\n"
+        << "Angle 0.0 0.0 0.0\n"
+        << "IncrementalAngle 0\n"
+        << "AnimationFile " << animFile << "\n"
+        << "End\n"
+        << "Type BSplineCurve Curve1\n";
+    for (const auto& cp : controlPoints)
     {
         file << "ControlPoint " << cp.x << " " << cp.y << " " << cp.z << "\n";
     }
     file << "PointsPerSegment 100\n"
-         << "Color 1.0 0.0 0.0 1.0\n"
-         << "End\n";
+        << "Color 1.0 0.0 0.0 1.0\n"
+        << "End\n";
     file.close();
 }
 
 // Requisito 3: Leitura do arquivo de cena e pontos de animação
-void readSceneFile(std::string sceneFilePath, std::unordered_map<std::string, Mesh> *meshes,
-                   std::vector<std::string> *meshList, std::unordered_map<std::string, BSplineCurve> *bSplineCurves,
-                   GlobalConfig *globalConfig)
+void readSceneFile(const std::string& sceneFilePath,
+    std::unordered_map<std::string, SceneMesh>* meshes,
+    std::vector<std::string>* meshList,
+    std::unordered_map<std::string, BSplineCurve>* bSplineCurves,
+    GlobalConfig* globalConfig)
 {
     std::ifstream file(sceneFilePath);
     std::string line;
@@ -678,11 +684,11 @@ void readSceneFile(std::string sceneFilePath, std::unordered_map<std::string, Me
     }
 
     std::string objectType, name, objFilePath, mtlFilePath, animFile;
-    glm::vec3 scale{1.0f}, position{0.0f}, rotation{0.0f}, angle{0.0f};
+    glm::vec3 scale{ 1.0f }, position{ 0.0f }, rotation{ 0.0f }, angle{ 0.0f };
     GLuint incrementalAngle = false;
     std::vector<glm::vec3> tempControlPoints;
     GLuint pointsPerSegment = 0;
-    glm::vec4 color{1.0f};
+    glm::vec4 color{ 1.0f };
 
     while (getline(file, line))
     {
@@ -756,7 +762,8 @@ void readSceneFile(std::string sceneFilePath, std::unordered_map<std::string, Me
             }
             else if (objectType == "Mesh")
             {
-                Mesh mesh;
+                // NOTE: agora usamos SceneMesh, não mais Mesh (do UML)
+                SceneMesh mesh;
                 mesh.name = name;
                 mesh.objFilePath = objFilePath;
                 mesh.mtlFilePath = mtlFilePath;
@@ -775,7 +782,7 @@ void readSceneFile(std::string sceneFilePath, std::unordered_map<std::string, Me
                 {
                     std::ifstream anim(animFile);
                     std::string animLine;
-                    while (getline(anim, animLine))
+                    while (std::getline(anim, animLine))
                     {
                         std::istringstream ass(animLine);
                         glm::vec3 pos;
@@ -785,6 +792,7 @@ void readSceneFile(std::string sceneFilePath, std::unordered_map<std::string, Me
                     anim.close();
                 }
 
+                // Insere no mapa de SceneMesh
                 meshes->insert(std::make_pair(name, mesh));
                 meshList->push_back(name);
             }
@@ -912,37 +920,6 @@ std::vector<Vertex> setupObj(std::string path)
                 vertices.push_back(v2);
             }
         }
-
-
-        /*
-        else if (type == "f")
-        {
-            std::string v1, v2, v3;
-            ss >> v1 >> v2 >> v3;
-            int vIdx[3], tIdx[3], nIdx[3];
-            std::string verts[3] = {v1, v2, v3};
-            for (int i = 0; i < 3; ++i)
-            {
-                size_t p1 = verts[i].find('/');
-                size_t p2 = verts[i].find('/', p1 + 1);
-                vIdx[i] = std::stoi(verts[i].substr(0, p1)) - 1;
-                tIdx[i] = std::stoi(verts[i].substr(p1 + 1, p2 - p1 - 1)) - 1; //Line with error
-                nIdx[i] = std::stoi(verts[i].substr(p2 + 1)) - 1;
-            }
-            for (int i = 0; i < 3; ++i)
-            {
-                Vertex v{};
-                v.x = temp_positions[vIdx[i]].x;
-                v.y = temp_positions[vIdx[i]].y;
-                v.z = temp_positions[vIdx[i]].z;
-                v.s = temp_texcoords[tIdx[i]].x;
-                v.t = temp_texcoords[tIdx[i]].y;
-                v.nx = temp_normals[nIdx[i]].x;
-                v.ny = temp_normals[nIdx[i]].y;
-                v.nz = temp_normals[nIdx[i]].z;
-                vertices.push_back(v);
-            }
-        }*/
     }
     file.close();
     return vertices;
@@ -992,7 +969,7 @@ GLuint setupTexture(std::string filename)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     stbi_set_flip_vertically_on_load(true);
     int w, h, channels;
-    unsigned char *data = stbi_load(filename.c_str(), &w, &h, &channels, 0);
+    unsigned char* data = stbi_load(filename.c_str(), &w, &h, &channels, 0);
     if (data)
     {
         GLenum fmt = (channels == 3) ? GL_RGB : GL_RGBA;
@@ -1008,7 +985,7 @@ GLuint setupTexture(std::string filename)
 }
 
 // Função key_callback ajustada
-void key_callback(GLFWwindow *window, int key, int scancode, int action, int mode)
+void key_callback(GLFWwindow* window, int key, int scancode, int action, int mode)
 {
     if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
         glfwSetWindowShouldClose(window, GL_TRUE);
@@ -1048,7 +1025,7 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action, int mod
     }
 }
 
-void mouse_callback(GLFWwindow *window, double xpos, double ypos)
+void mouse_callback(GLFWwindow* window, double xpos, double ypos)
 {
     if (!editorMode)
     {
@@ -1072,7 +1049,7 @@ void mouse_callback(GLFWwindow *window, double xpos, double ypos)
     }
 }
 
-int setupGeometry(std::vector<Vertex> &vertices)
+int setupGeometry(std::vector<Vertex>& vertices)
 {
     GLuint VBO, VAO;
     glGenBuffers(1, &VBO);
@@ -1080,11 +1057,11 @@ int setupGeometry(std::vector<Vertex> &vertices)
     glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(Vertex), vertices.data(), GL_STATIC_DRAW);
     glGenVertexArrays(1, &VAO);
     glBindVertexArray(VAO);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (GLvoid *)0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (GLvoid*)0);
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (GLvoid *)(3 * sizeof(GLfloat)));
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (GLvoid*)(3 * sizeof(GLfloat)));
     glEnableVertexAttribArray(1);
-    glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (GLvoid *)(5 * sizeof(GLfloat)));
+    glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (GLvoid*)(5 * sizeof(GLfloat)));
     glEnableVertexAttribArray(3);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
@@ -1099,7 +1076,7 @@ GLuint generateControlPointsBuffer(std::vector<glm::vec3> controlPoints)
     glBufferData(GL_ARRAY_BUFFER, controlPoints.size() * sizeof(glm::vec3), controlPoints.data(), GL_STATIC_DRAW);
     glGenVertexArrays(1, &VAO);
     glBindVertexArray(VAO);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(GLfloat), (GLvoid *)0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(GLfloat), (GLvoid*)0);
     glEnableVertexAttribArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
@@ -1116,7 +1093,7 @@ BSplineCurve createBSplineCurve(std::vector<glm::vec3> controlPoints, int points
     glBufferData(GL_ARRAY_BUFFER, bc.curvePoints.size() * sizeof(glm::vec3), bc.curvePoints.data(), GL_STATIC_DRAW);
     glGenVertexArrays(1, &VAO);
     glBindVertexArray(VAO);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(GLfloat), (GLvoid *)0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(GLfloat), (GLvoid*)0);
     glEnableVertexAttribArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
@@ -1125,7 +1102,7 @@ BSplineCurve createBSplineCurve(std::vector<glm::vec3> controlPoints, int points
 }
 
 // Requisito 3: Cálculo do ângulo de rotação do carro
-float computeAngleBetweenPoints(const glm::vec3 &p1, const glm::vec3 &p2)
+float computeAngleBetweenPoints(const glm::vec3& p1, const glm::vec3& p2)
 {
     glm::vec3 dir = p2 - p1; // direção no solo
     return glm::degrees(atan2(dir.z, dir.x));
