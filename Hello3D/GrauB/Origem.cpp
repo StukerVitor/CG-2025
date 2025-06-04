@@ -1,9 +1,6 @@
 ﻿// File: main.cpp
 #include "GeometryObjects.hpp"
 
-#define STB_IMAGE_IMPLEMENTATION
-#include "../../Common/include/stb_image.h"
-
 // *** BIBLIOTECAS PADRÃO *** ------------------------------------------------
 #include <iostream>
 #include <string>
@@ -20,22 +17,6 @@
 // ESTRUTURAS DE DADOS AUXILIARES (para renderização e lógica do aplicativo)
 // ============================================================================
 
-// Estrutura para armazenar dados de um único vértice em OpenGL
-struct Vertex {
-    float x, y, z;    // Posição do vértice
-    float s, t;       // Coordenadas de textura
-    float nx, ny, nz; // Vetor normal
-};
-
-// Estrutura para armazenar parâmetros de material
-struct Material {
-    float kaR, kaG, kaB;     // Coeficiente ambiente
-    float kdR, kdG, kdB;     // Coeficiente difuso
-    float ksR, ksG, ksB;     // Coeficiente especular
-    float ns;                // Expoente especular
-    std::string textureName; // Nome do arquivo de textura (map_Kd)
-};
-
 // Configuração global do aplicativo (luz, câmera, parâmetros de fog, etc.)
 struct GlobalConfig {
     glm::vec3 lightPos, lightColor;   // Posição e cor da luz
@@ -47,21 +28,6 @@ struct GlobalConfig {
     float   attConstant, attLinear, attQuadratic; // Fatores de atenuação
     glm::vec3 fogColor;                            // Cor do nevoeiro
     float   fogStart, fogEnd;                      // Distâncias de início e fim do nevoeiro
-};
-
-// Estrutura que representa um “Mesh” no contexto da cena (nós o chamaremos de SceneMesh para não conflitar com a classe Mesh acima)
-struct SceneMesh {
-    std::string name;
-    std::string objFilePath, mtlFilePath;
-    glm::vec3 scale, position, rotation;
-    glm::vec3 angle;
-    GLuint incrementalAngle;
-    std::vector<Vertex> vertices;
-    GLuint VAO;
-    Material material;
-    GLuint textureID;
-    // Requisito 1: Array de transformações para animação do carro
-    std::vector<glm::vec3> animationPositions; // Posições para cada passo de animação
 };
 
 // Estrutura para curvas B-Spline
@@ -84,22 +50,16 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos);
 void mouse_button_callback(GLFWwindow* window, int button, int action, int mods);
 
 void readSceneFile(const std::string&,
-    std::unordered_map<std::string, SceneMesh>*,
+    std::unordered_map<std::string, Object3D>*,
     std::vector<std::string>*,
     std::unordered_map<std::string, BSplineCurve>*,
     GlobalConfig*);
 
-GLuint setupTexture(std::string filename);
-std::vector<Vertex> setupObj(std::string path);
-Material setupMtl(std::string path);
-int setupGeometry(std::vector<Vertex>& vertices);
 std::vector<glm::vec3> generateBSplinePoints(const std::vector<glm::vec3>& controlPoints, int pointsPerSegment);
 GLuint generateControlPointsBuffer(std::vector<glm::vec3> controlPoints);
 BSplineCurve createBSplineCurve(std::vector<glm::vec3> controlPoints, int pointsPerSegment);
 void generateTrackMesh(const std::vector<glm::vec3> centerPoints, float trackWidth,
     std::vector<Vertex>& vertices, std::vector<unsigned int>& indices);
-void exportTrackToOBJ(const std::vector<Vertex>& vertices, const std::vector<unsigned int>& indices,
-    const std::string& filename);
 void exportAnimationPoints(const std::vector<glm::vec3>& points, const std::string& filename);
 void generateSceneFile(const std::string& trackObj, const std::string& carObj,
     const std::string& animFile, const std::string& sceneFile,
@@ -119,12 +79,12 @@ bool      moveW = false, moveA = false, moveS = false, moveD = false;
 bool      editorMode = true;                     // Requisito 2a: Modo editor ativo inicialmente
 std::vector<glm::vec3> editorControlPoints;      // Requisito 2a: Pontos de controle clicados
 int       animationIndex = 0;                    // Índice para animação do carro
-float     trackWidth = 1.0f;                 // Largura da pista
+float     trackWidth = 1.0f;                     // Largura da pista
 GLuint    showCurves = 1;
 
 // Variáveis que antes ficavam dentro do main ficam agora globais:
-std::unordered_map<std::string, SceneMesh> meshes;                // Agora global
-std::vector<std::string>                 meshList;                // Agora global
+std::unordered_map<std::string, Object3D> meshes;                // Agora armazena Object3D
+std::vector<std::string>                  meshList;              // Agora global
 std::unordered_map<std::string, BSplineCurve> bSplineCurves;      // Agora global
 
 double lastFrameTime = 0.0;
@@ -318,21 +278,21 @@ int main() {
             glUniform1f(glGetUniformLocation(objectShader.getId(), "attLinear"), globalConfig.attLinear);
             glUniform1f(glGetUniformLocation(objectShader.getId(), "attQuadratic"), globalConfig.attQuadratic);
 
-            // Desenha todas as SceneMesh carregadas
+            // Desenha todas as Object3D carregadas
             float lastCarYaw = 0.0f;
             for (auto& pair : meshes) {
-                SceneMesh& mesh = pair.second;
+                Object3D& obj = pair.second;
                 glm::mat4  model(1.0f);
 
                 // Requisito 3d: Animação do carro
-                if (mesh.name == "Carro" && mesh.animationPositions.size() >= 3) {
-                    int N = static_cast<int>(mesh.animationPositions.size());
+                if (obj.name == "Carro" && obj.animationPositions.size() >= 3) {
+                    int N = static_cast<int>(obj.animationPositions.size());
                     int idx = animationIndex % N;
                     int prevIdx = (idx - 1 + N) % N;
                     int nextIdx = (idx + 1) % N;
 
-                    glm::vec3 prev = mesh.animationPositions[prevIdx];
-                    glm::vec3 next = mesh.animationPositions[nextIdx];
+                    glm::vec3 prev = obj.animationPositions[prevIdx];
+                    glm::vec3 next = obj.animationPositions[nextIdx];
                     glm::vec3 dir = glm::normalize(next - prev);
 
                     if (glm::length(dir) > 1e-6f) {
@@ -347,42 +307,44 @@ int main() {
                         lastCarYaw = rawYaw;
 
                         // Posiciona e rotaciona
-                        model = glm::translate(model, mesh.animationPositions[idx]);
+                        model = glm::translate(model, obj.animationPositions[idx]);
                         model = glm::rotate(model, rawYaw, glm::vec3(0, 1, 0));
                     }
                     else {
                         // fallback: apenas posiciona
-                        model = glm::translate(model, mesh.animationPositions[idx]);
+                        model = glm::translate(model, obj.animationPositions[idx]);
                     }
                 }
                 else {
-                    model = glm::translate(model, mesh.position);
+                    model = glm::translate(model, obj.position);
                 }
 
                 // Aplica rotações em X, Y, Z
-                model = glm::rotate(model, glm::radians(mesh.angle.x), glm::vec3(1.0f, 0.0f, 0.0f));
-                model = glm::rotate(model, glm::radians(mesh.angle.y), glm::vec3(0.0f, 1.0f, 0.0f));
-                model = glm::rotate(model, glm::radians(mesh.angle.z), glm::vec3(0.0f, 0.0f, 1.0f));
+                model = glm::rotate(model, glm::radians(obj.angle.x), glm::vec3(1.0f, 0.0f, 0.0f));
+                model = glm::rotate(model, glm::radians(obj.angle.y), glm::vec3(0.0f, 1.0f, 0.0f));
+                model = glm::rotate(model, glm::radians(obj.angle.z), glm::vec3(0.0f, 0.0f, 1.0f));
                 // Aplica escala
-                model = glm::scale(model, mesh.scale);
+                model = glm::scale(model, obj.scale);
 
                 glUniformMatrix4fv(glGetUniformLocation(objectShader.getId(), "model"), 1, GL_FALSE, glm::value_ptr(model));
-                glUniform1f(glGetUniformLocation(objectShader.getId(), "kaR"), mesh.material.kaR);
-                glUniform1f(glGetUniformLocation(objectShader.getId(), "kaG"), mesh.material.kaG);
-                glUniform1f(glGetUniformLocation(objectShader.getId(), "kaB"), mesh.material.kaB);
-                glUniform1f(glGetUniformLocation(objectShader.getId(), "kdR"), mesh.material.kdR);
-                glUniform1f(glGetUniformLocation(objectShader.getId(), "kdG"), mesh.material.kdG);
-                glUniform1f(glGetUniformLocation(objectShader.getId(), "kdB"), mesh.material.kdB);
-                glUniform1f(glGetUniformLocation(objectShader.getId(), "ksR"), mesh.material.ksR);
-                glUniform1f(glGetUniformLocation(objectShader.getId(), "ksG"), mesh.material.ksG);
-                glUniform1f(glGetUniformLocation(objectShader.getId(), "ksB"), mesh.material.ksB);
-                glUniform1f(glGetUniformLocation(objectShader.getId(), "ns"), mesh.material.ns);
+                glUniform1f(glGetUniformLocation(objectShader.getId(), "kaR"), obj.material.kaR);
+                glUniform1f(glGetUniformLocation(objectShader.getId(), "kaG"), obj.material.kaG);
+                glUniform1f(glGetUniformLocation(objectShader.getId(), "kaB"), obj.material.kaB);
+                glUniform1f(glGetUniformLocation(objectShader.getId(), "kdR"), obj.material.kdR);
+                glUniform1f(glGetUniformLocation(objectShader.getId(), "kdG"), obj.material.kdG);
+                glUniform1f(glGetUniformLocation(objectShader.getId(), "kdB"), obj.material.kdB);
+                glUniform1f(glGetUniformLocation(objectShader.getId(), "ksR"), obj.material.ksR);
+                glUniform1f(glGetUniformLocation(objectShader.getId(), "ksG"), obj.material.ksG);
+                glUniform1f(glGetUniformLocation(objectShader.getId(), "ksB"), obj.material.ksB);
+                glUniform1f(glGetUniformLocation(objectShader.getId(), "ns"), obj.material.ns);
 
-                // Renderiza o mesh
-                glBindVertexArray(mesh.VAO);
+                // Renderiza o Object3D
+                GLuint vao = obj.getMesh().VAO;
+                size_t vertCount = obj.getMesh().vertices.size();
+                glBindVertexArray(vao);
                 glActiveTexture(GL_TEXTURE0);
-                glBindTexture(GL_TEXTURE_2D, mesh.textureID);
-                glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(mesh.vertices.size()));
+                glBindTexture(GL_TEXTURE_2D, obj.textureID);
+                glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertCount));
                 glBindVertexArray(0);
             }
 
@@ -398,7 +360,7 @@ int main() {
                     glDrawArrays(GL_LINE_STRIP, 0, static_cast<GLsizei>(bc.curvePoints.size()));
                     glBindVertexArray(0);
 
-                    // Puntos de controle em amarelo
+                    // Pontos de controle em amarelo
                     glUniform4f(glGetUniformLocation(lineShader.getId(), "finalColor"), 1.0f, 1.0f, 0.0f, 1.0f);
                     glBindVertexArray(bc.controlPointsVAO);
                     glDrawArrays(GL_POINTS, 0, static_cast<GLsizei>(bc.controlPoints.size()));
@@ -407,9 +369,11 @@ int main() {
             }
 
             // Atualiza a animação do carro
-            while (animAccumulator >= STEP_TIME) {
-                animationIndex = (animationIndex + 1) % meshes["Carro"].animationPositions.size();
-                animAccumulator -= STEP_TIME;
+            if (!meshes["Carro"].animationPositions.empty()) {
+                while (animAccumulator >= STEP_TIME) {
+                    animationIndex = (animationIndex + 1) % meshes["Carro"].animationPositions.size();
+                    animAccumulator -= STEP_TIME;
+                }
             }
         }
 
@@ -418,10 +382,11 @@ int main() {
 
     // Liberação de recursos
     for (const auto& pair : meshes) {
-        glDeleteVertexArrays(1, &pair.second.VAO);
+        glDeleteVertexArrays(1, &pair.second.getMesh().VAO);
     }
     for (const auto& pair : bSplineCurves) {
         glDeleteVertexArrays(1, &pair.second.VAO);
+        glDeleteVertexArrays(1, &pair.second.controlPointsVAO);
     }
     glfwTerminate();
     return 0;
@@ -499,106 +464,78 @@ std::vector<glm::vec3> generateBSplinePoints(const std::vector<glm::vec3>& contr
 
 // Requisito 2c, 2d: Geração das curvas interna e externa da pista
 void generateTrackMesh(const std::vector<glm::vec3> centerPoints,
-    float trackWidth,
-    std::vector<Vertex>& vertices,
-    std::vector<unsigned int>& indices)
+                       float trackWidth,
+                       std::vector<Vertex>& vertices,
+                       std::vector<unsigned int>& indices)
 {
     vertices.clear();
     indices.clear();
     const float halfWidth = trackWidth * 0.5f;
+    size_t n = centerPoints.size();
+    if (n < 2) return;
 
-    std::vector<glm::vec3> innerPoints;
-    std::vector<glm::vec3> outerPoints;
-
-    // Gerar pontos das curvas interna e externa
-    for (size_t i = 0; i < centerPoints.size(); ++i) {
+    // 1) Pre‐compute “inner” e “outer” offsets no plano XY
+    std::vector<glm::vec3> innerPoints(n), outerPoints(n);
+    for (size_t i = 0; i < n; ++i) {
         glm::vec3 A = centerPoints[i];
-        glm::vec3 B = centerPoints[(i + 1) % centerPoints.size()];
+        glm::vec3 B = centerPoints[(i + 1) % n];
 
-        float w = B.x - A.x;
-        float h = B.y - A.y;
-        float theta = atan2(h, w);
-        float alpha = (w < 0.0f) ? theta - glm::radians(90.0f) : theta + glm::radians(90.0f);
+        float dx = B.x - A.x;
+        float dy = B.y - A.y;
+        float theta = atan2(dy, dx);
+        // ângulo perpendicular em relação ao segmento AB
+        float alpha = (dx < 0.0f)
+            ? theta - glm::radians(90.0f)
+            : theta + glm::radians(90.0f);
 
         float cosA = cos(alpha);
         float sinA = sin(alpha);
-
         glm::vec3 offset(cosA * halfWidth, sinA * halfWidth, 0.0f);
 
-        glm::vec3 inner = A + offset;
-        glm::vec3 outer = A - offset;
-
-        innerPoints.push_back(inner);
-        outerPoints.push_back(outer);
+        innerPoints[i] = A + offset;  // borda interna
+        outerPoints[i] = A - offset;  // borda externa
     }
 
-    // Gerar vértices e índices com normais apropriadas
-    for (size_t i = 0; i < centerPoints.size(); ++i) {
-        size_t next = (i + 1) % centerPoints.size();
+    // 2) Para cada segmento, crie um “quad” com 4 vértices (v0,v1,v2,v3)
+    //    e 2 triângulos, usando sempre as mesmas UVs: (0,0),(1,0),(1,1),(0,1).
+    //    Normal fixa = (0,0,1).
+    for (size_t i = 0; i < n; ++i) {
+        size_t next = (i + 1) % n;
 
         glm::vec3 A = outerPoints[i];
         glm::vec3 B = outerPoints[next];
         glm::vec3 C = innerPoints[i];
         glm::vec3 D = innerPoints[next];
 
-        glm::vec3 AB = B - A;
-        glm::vec3 AC = C - A;
-        glm::vec3 BC = C - B;
-        glm::vec3 BD = D - B;
+        // normal “para cima” (já que track está em Z=0)
+        glm::vec3 upNormal(0.0f, 0.0f, 1.0f);
 
-        glm::vec3 vn1 = glm::normalize(glm::cross(AB, AC));
-        glm::vec3 vn2 = glm::normalize(glm::cross(BC, BD));
+        // constrói 4 vértices do quad (sempre na ordem C, A, B, D):
+        Vertex v0 = { C.x, C.y, C.z,  0.0f, 0.0f,  upNormal.x, upNormal.y, upNormal.z }; // inner[i]
+        Vertex v1 = { A.x, A.y, A.z,  1.0f, 0.0f,  upNormal.x, upNormal.y, upNormal.z }; // outer[i]
+        Vertex v2 = { B.x, B.y, B.z,  1.0f, 1.0f,  upNormal.x, upNormal.y, upNormal.z }; // outer[i+1]
+        Vertex v3 = { D.x, D.y, D.z,  0.0f, 1.0f,  upNormal.x, upNormal.y, upNormal.z }; // inner[i+1]
 
-        Vertex v0 = { C.x, C.y, C.z, 0.0f, 0.0f, vn1.x, vn1.y, vn1.z }; // inner[i]
-        Vertex v1 = { A.x, A.y, A.z, 1.0f, 0.0f, vn1.x, vn1.y, vn1.z }; // outer[i]
-        Vertex v2 = { B.x, B.y, B.z, 1.0f, 1.0f, vn2.x, vn2.y, vn2.z }; // outer[i+1]
-        Vertex v3 = { D.x, D.y, D.z, 0.0f, 1.0f, vn2.x, vn2.y, vn2.z }; // inner[i+1]
-
-        size_t base = vertices.size();
+        // índice base antes de inserir esses 4 vértices
+        unsigned int base = static_cast<unsigned int>(vertices.size());
         vertices.push_back(v0);
         vertices.push_back(v1);
         vertices.push_back(v2);
         vertices.push_back(v3);
 
-        indices.push_back(static_cast<unsigned int>(base + 0));
-        indices.push_back(static_cast<unsigned int>(base + 3));
-        indices.push_back(static_cast<unsigned int>(base + 1));
+        // 1º triângulo: (v0=C, v3=D, v1=A)
+        indices.push_back(base + 0);
+        indices.push_back(base + 3);
+        indices.push_back(base + 1);
 
-        indices.push_back(static_cast<unsigned int>(base + 1));
-        indices.push_back(static_cast<unsigned int>(base + 3));
-        indices.push_back(static_cast<unsigned int>(base + 2));
+        // 2º triângulo: (v1=A, v3=D, v2=B)
+        indices.push_back(base + 1);
+        indices.push_back(base + 3);
+        indices.push_back(base + 2);
     }
 }
 
-// Requisito 2h: Exportação da malha da pista para OBJ
-void exportTrackToOBJ(const std::vector<Vertex>& vertices,
-    const std::vector<unsigned int>& indices,
-    const std::string& filename)
-{
-    std::ofstream file(filename);
-    if (!file.is_open()) {
-        std::cerr << "Falha ao criar arquivo OBJ " << filename << std::endl;
-        return;
-    }
 
-    // Inversão de Y com Z (plano XZ como chão)
-    for (const auto& v : vertices) {
-        file << "v " << v.x << " " << v.z << " " << v.y << "\n";
-    }
-    for (const auto& v : vertices) {
-        file << "vt " << v.s << " " << v.t << "\n";
-    }
-    for (const auto& v : vertices) {
-        file << "vn " << v.nx << " " << v.ny << " " << v.nz << "\n";
-    }
-    for (size_t i = 0; i < indices.size(); i += 3) {
-        file << "f "
-            << (indices[i] + 1) << "/" << (indices[i] + 1) << "/" << (indices[i] + 1) << " "
-            << (indices[i + 1] + 1) << "/" << (indices[i + 1] + 1) << "/" << (indices[i + 1] + 1) << " "
-            << (indices[i + 2] + 1) << "/" << (indices[i + 2] + 1) << "/" << (indices[i + 2] + 1) << "\n";
-    }
-    file.close();
-}
 
 // Requisito 2i: Exportação dos pontos de animação
 void exportAnimationPoints(const std::vector<glm::vec3>& points, const std::string& filename) {
@@ -622,7 +559,7 @@ void generateSceneFile(const std::string& trackObj, const std::string& carObj, c
 {
     std::ofstream file(sceneFile);
     file << "Type GlobalConfig Config\n"
-        << "LightPos 10.0 10.0 10.0\n"
+        << "LightPos 2.0 10.0 2.0\n"
         << "LightColor 1.0 1.0 1.0\n"
         << "CameraPos 0.0 5.0 10.0\n"
         << "CameraFront 0.0 0.0 -1.0\n"
@@ -631,9 +568,9 @@ void generateSceneFile(const std::string& trackObj, const std::string& carObj, c
         << "FarPlane 100.0\n"
         << "Sensitivity 0.1\n"
         << "CameraSpeed 0.008\n"
-        << "AttConstant 1.0\n"
-        << "AttLinear 0.09\n"
-        << "AttQuadratic 0.032\n"
+        << "AttConstant 0.2\n"
+        << "AttLinear 0.02\n"
+        << "AttQuadratic 0.005\n"
         << "FogColor 0.5 0.5 0.5\n"
         << "FogStart 5.0\n"
         << "FogEnd 50.0\n"
@@ -670,7 +607,7 @@ void generateSceneFile(const std::string& trackObj, const std::string& carObj, c
 
 // Requisito 3: Leitura do arquivo de cena e pontos de animação
 void readSceneFile(const std::string& sceneFilePath,
-    std::unordered_map<std::string, SceneMesh>* meshes,
+    std::unordered_map<std::string, Object3D>* meshes,
     std::vector<std::string>* meshList,
     std::unordered_map<std::string, BSplineCurve>* bSplineCurves,
     GlobalConfig* globalConfig)
@@ -762,38 +699,33 @@ void readSceneFile(const std::string& sceneFilePath,
             }
             else if (objectType == "Mesh")
             {
-                // NOTE: agora usamos SceneMesh, não mais Mesh (do UML)
-                SceneMesh mesh;
-                mesh.name = name;
-                mesh.objFilePath = objFilePath;
-                mesh.mtlFilePath = mtlFilePath;
-                mesh.vertices = setupObj(objFilePath);
-                mesh.VAO = setupGeometry(mesh.vertices);
-                mesh.material = setupMtl(mtlFilePath);
-                mesh.textureID = setupTexture(mesh.material.textureName);
-                mesh.scale = scale;
-                mesh.position = position;
-                mesh.rotation = rotation;
-                mesh.angle = angle;
-                mesh.incrementalAngle = incrementalAngle;
+                // Cria o Object3D usando o construtor que lê .obj e .mtl
+                Object3D obj(
+                    /*_name=*/           name,
+                    /*_objPath=*/        objFilePath,
+                    /*_mtlPath=*/        mtlFilePath,
+                    /*scale_=*/          scale,
+                    /*pos_=*/            position,
+                    /*rot_=*/            rotation,
+                    /*ang_=*/            angle,
+                    /*incAng=*/          incrementalAngle
+                );
 
-                // Requisito 3a: Carrega pontos de animação
-                if (!animFile.empty())
-                {
+                // Carrega pontos de animação (mesmo código de antes):
+                if (!animFile.empty()) {
                     std::ifstream anim(animFile);
                     std::string animLine;
-                    while (std::getline(anim, animLine))
-                    {
+                    while (std::getline(anim, animLine)) {
                         std::istringstream ass(animLine);
                         glm::vec3 pos;
                         ass >> pos.x >> pos.y >> pos.z;
-                        mesh.animationPositions.push_back(pos);
+                        obj.animationPositions.push_back(pos);
                     }
                     anim.close();
                 }
 
-                // Insere no mapa de SceneMesh
-                meshes->insert(std::make_pair(name, mesh));
+                // Insere no mapa global:
+                meshes->insert({ name, obj });
                 meshList->push_back(name);
             }
             else if (objectType == "BSplineCurve")
@@ -810,178 +742,6 @@ void readSceneFile(const std::string& sceneFilePath,
         }
     }
     file.close();
-}
-
-// Funções de suporte (mantidas do código original, ajustadas conforme necessário)
-std::vector<Vertex> setupObj(std::string path)
-{
-    std::vector<Vertex> vertices;
-    std::ifstream file(path);
-    std::string line;
-    std::vector<glm::vec3> temp_positions;
-    std::vector<glm::vec2> temp_texcoords;
-    std::vector<glm::vec3> temp_normals;
-
-    if (!file.is_open())
-    {
-        std::cerr << "Falha ao abrir o arquivo " << path << std::endl;
-        return vertices;
-    }
-
-    while (getline(file, line))
-    {
-        std::istringstream ss(line);
-        std::string type;
-        ss >> type;
-
-        if (type == "v")
-        {
-            glm::vec3 pos;
-            ss >> pos.x >> pos.y >> pos.z;
-            temp_positions.push_back(pos);
-        }
-        else if (type == "vt")
-        {
-            glm::vec2 uv;
-            ss >> uv.x >> uv.y;
-            temp_texcoords.push_back(uv);
-        }
-        else if (type == "vn")
-        {
-            glm::vec3 n;
-            ss >> n.x >> n.y >> n.z;
-            temp_normals.push_back(n);
-        }
-        else if (type == "f")
-        {
-            std::vector<std::string> tokens;
-            std::string token;
-            while (ss >> token) tokens.push_back(token);
-
-            if (tokens.size() < 3) continue; // not a valid face
-
-            auto parse_vertex = [&](const std::string& vertStr, Vertex& vtx) {
-                int vIdx = -1, tIdx = -1, nIdx = -1;
-                size_t firstSlash = vertStr.find('/');
-                size_t secondSlash = vertStr.find('/', firstSlash + 1);
-
-                if (firstSlash == std::string::npos)
-                {
-                    vIdx = std::stoi(vertStr) - 1;
-                }
-                else if (secondSlash == std::string::npos)
-                {
-                    vIdx = std::stoi(vertStr.substr(0, firstSlash)) - 1;
-                    tIdx = std::stoi(vertStr.substr(firstSlash + 1)) - 1;
-                }
-                else if (secondSlash == firstSlash + 1)
-                {
-                    vIdx = std::stoi(vertStr.substr(0, firstSlash)) - 1;
-                    nIdx = std::stoi(vertStr.substr(secondSlash + 1)) - 1;
-                }
-                else
-                {
-                    vIdx = std::stoi(vertStr.substr(0, firstSlash)) - 1;
-                    tIdx = std::stoi(vertStr.substr(firstSlash + 1, secondSlash - firstSlash - 1)) - 1;
-                    nIdx = std::stoi(vertStr.substr(secondSlash + 1)) - 1;
-                }
-
-                if (vIdx >= 0) {
-                    vtx.x = temp_positions[vIdx].x;
-                    vtx.y = temp_positions[vIdx].y;
-                    vtx.z = temp_positions[vIdx].z;
-                }
-                if (tIdx >= 0) {
-                    vtx.s = temp_texcoords[tIdx].x;
-                    vtx.t = temp_texcoords[tIdx].y;
-                }
-                else {
-                    vtx.s = vtx.t = 0.0f;
-                }
-                if (nIdx >= 0) {
-                    vtx.nx = temp_normals[nIdx].x;
-                    vtx.ny = temp_normals[nIdx].y;
-                    vtx.nz = temp_normals[nIdx].z;
-                }
-                else {
-                    vtx.nx = vtx.ny = vtx.nz = 0.0f;
-                }
-                };
-
-            // Triangle fan method: v0, v1, v2; v0, v2, v3; v0, v3, v4; ...
-            Vertex v0, v1, v2;
-            parse_vertex(tokens[0], v0);
-            for (size_t i = 1; i + 1 < tokens.size(); ++i)
-            {
-                parse_vertex(tokens[i], v1);
-                parse_vertex(tokens[i + 1], v2);
-                vertices.push_back(v0);
-                vertices.push_back(v1);
-                vertices.push_back(v2);
-            }
-        }
-    }
-    file.close();
-    return vertices;
-}
-
-Material setupMtl(std::string path)
-{
-    Material material{};
-    std::ifstream file(path);
-    std::string line;
-
-    if (!file.is_open())
-    {
-        std::cerr << "Falha ao abrir o arquivo " << path << std::endl;
-        return material;
-    }
-
-    while (getline(file, line))
-    {
-        std::istringstream ss(line);
-        std::string type;
-        ss >> type;
-
-        if (type == "Ka")
-            ss >> material.kaR >> material.kaG >> material.kaB;
-        else if (type == "Kd")
-            ss >> material.kdR >> material.kdG >> material.kdB;
-        else if (type == "Ks")
-            ss >> material.ksR >> material.ksG >> material.ksB;
-        else if (type == "Ns")
-            ss >> material.ns;
-        else if (type == "map_Kd")
-            ss >> material.textureName;
-    }
-    file.close();
-    return material;
-}
-
-GLuint setupTexture(std::string filename)
-{
-    GLuint texId;
-    glGenTextures(1, &texId);
-    glBindTexture(GL_TEXTURE_2D, texId);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    stbi_set_flip_vertically_on_load(true);
-    int w, h, channels;
-    unsigned char* data = stbi_load(filename.c_str(), &w, &h, &channels, 0);
-    if (data)
-    {
-        GLenum fmt = (channels == 3) ? GL_RGB : GL_RGBA;
-        glTexImage2D(GL_TEXTURE_2D, 0, fmt, w, h, 0, fmt, GL_UNSIGNED_BYTE, data);
-        glGenerateMipmap(GL_TEXTURE_2D);
-    }
-    else
-    {
-        std::cerr << "Falha ao carregar a textura " << filename << std::endl;
-    }
-    stbi_image_free(data);
-    return texId;
 }
 
 // Função key_callback ajustada
@@ -1015,7 +775,27 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
             std::vector<Vertex> vertices;
             std::vector<unsigned int> indices;
             generateTrackMesh(curvePoints, trackWidth, vertices, indices);
-            exportTrackToOBJ(vertices, indices, "track.obj");
+
+            // Cria um novo vetor de Vertex “trackVerts” aplicando Y↔Z
+            std::vector<Vertex> trackVerts;
+            trackVerts.reserve(vertices.size());
+            for (const auto& v : vertices) {
+                // Posição: (x, z, y)
+                // Normal: (nx, nz, ny)
+                trackVerts.push_back({
+                    v.x, v.z, v.y,    // swapped y<->z
+                    v.s, v.t,
+                    v.nx, v.nz, v.ny  // swapped normal y<->z
+                    });
+            }
+            
+            // Constrói diretamente o Mesh de “track”:
+            Mesh trackMesh(trackVerts, indices, /*groupName=*/"track", /*mtlName=*/"");
+
+            // Grava “track.obj” com OBJWriter:
+            OBJWriter objWriter;
+            objWriter.write(trackMesh, "track.obj");
+
             exportAnimationPoints(curvePoints, "animation.txt");
             generateSceneFile("track.obj", "car.obj", "animation.txt", "Scene.txt", editorControlPoints);
             readSceneFile("Scene.txt", &meshes, &meshList, &bSplineCurves, &globalConfig); // Agora acessa as globais
@@ -1047,25 +827,6 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos)
         front.z = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
         globalConfig.cameraFront = glm::normalize(front);
     }
-}
-
-int setupGeometry(std::vector<Vertex>& vertices)
-{
-    GLuint VBO, VAO;
-    glGenBuffers(1, &VBO);
-    glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(Vertex), vertices.data(), GL_STATIC_DRAW);
-    glGenVertexArrays(1, &VAO);
-    glBindVertexArray(VAO);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (GLvoid*)0);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (GLvoid*)(3 * sizeof(GLfloat)));
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (GLvoid*)(5 * sizeof(GLfloat)));
-    glEnableVertexAttribArray(3);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-    glBindVertexArray(0);
-    return VAO;
 }
 
 GLuint generateControlPointsBuffer(std::vector<glm::vec3> controlPoints)
